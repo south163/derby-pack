@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html>
+<body onload="init();">
+<script src="https://code.createjs.com/1.0.0/createjs.min.js"></script>
+<h2>Pack Definition</h2>
+
+<br></br>
+
+<canvas id="myCanvas" width="1296" height="900"
+style="border:1px solid #d3d3d3;">
+Your browser does not support the canvas element.
+</canvas>
+
+<script>
+<!-- constants for computations -->
+//scale for values: 1 in = 1 px
+const width = 1296;
+const height = 900;
+
+//constants for drawing straightaways
+const in1start = new createjs.Point(-210,-150);
+const in1end = new createjs.Point(210,-150);
+const out1start = new createjs.Point(-210,-330); 
+const out1end = new createjs.Point(210,-306);
+const in2start = new createjs.Point(210,150);
+const in2end = new createjs.Point(-210,150);
+const out2start = new createjs.Point(210,330);
+const out2end = new createjs.Point(-210,306); 
+//constants for drawing Turns
+const inradius = 150;
+const outradius = 318;
+const in1c = new createjs.Point(210,0);
+const out1c = new createjs.Point(210,12);
+const in2c = new createjs.Point(-210,0);
+const out2c = new createjs.Point(-210, -12);
+const arcstart1 = -(0.5 * Math.PI);
+const arcend1 = (0.5 * Math.PI);
+const arcstart2 = (0.5 * Math.PI);
+const arcend2 = -(0.5 * Math.PI);
+const helperDist = 84.5;
+const angle10ft = Math.acos((Math.pow(inradius,2) + Math.pow(inradius, 2) - Math.pow(helperDist, 2))/(2 * inradius * inradius));
+//scale: 1 pixel is 1 inch
+const anglePx = (angle10ft / 10) / 12;
+const oneFt = 12;
+const tenFt = oneFt * 10;
+//constants for identifying the pack
+const ezColor = "#C7FFC3";
+const packColor = "green";
+
+<!-- initial setup of the canvas -->
+const canvas = document.getElementById("myCanvas");
+var stage = new createjs.Stage("myCanvas");
+var track = new Track();
+var thePack = new createjs.Shape();
+thePack.graphics.beginFill("red");
+thePack.setTransform(width/ 2,height/2,1,-1);
+stage.addChildAt(thePack,0); //when we draw the pack we want it to be below everything else in the scene
+	
+var wblocker1 = new Skater("White Team Blocker #1", new createjs.Point(684,693.1875),"white","blocker");
+var wblocker2 = new Skater("White Team Blocker #2", new createjs.Point(798,690.1875),"white","blocker");
+var wblocker3 = new Skater("White Team Blocker #3", new createjs.Point(985,664.1875),"white","blocker");
+var wpivot = new Skater("White Team Pivot", new createjs.Point(964,636.1875),"white","pivot");
+var bblocker1 = new Skater("Black Team Blocker #1", new createjs.Point(419,713.1875), "black","blocker");
+var bblocker2 = new Skater("Black Team Blocker #2", new createjs.Point(426,673.1875), "black","blocker");
+var bblocker3 = new Skater("Black Team Blocker #3", new createjs.Point(473,697.1875), "black","blocker");
+var bpivot = new Skater("Black Team Pivot", new createjs.Point(579,695.1875), "black","pivot");
+var blockerLst = [wblocker1, wblocker2, wblocker3, wpivot, bblocker1, bblocker2, bblocker3, bpivot];
+
+//a Pack is a collection of skaters which have the potential to be a pack
+//this.start is the skater at the back of the pack and this.end is the skater 
+//at the front of the pack.
+//two packs can be compared to determine if they should be merged into a single 
+//pack by the two packs being within 10ft of each other.
+function Pack(skater) {
+	this.start = track.stdLoc(track.shape.globalToLocal(skater.shape.x, skater.shape.y));
+	this.end = this.start;
+	this.skaters = [skater];
+	this.length = track.distanceFrom(this.start, this.end);
+	//merges another pack into this one; returns this pack
+	this.mergePack = function(pack) {
+		if (track.distance(this.start, pack.start) < 0) {
+			this.start = pack.start;
+		};
+		if (track.distance(this.end, pack.end) > 0) {
+			this.end = pack.end;
+		}
+		this.skaters = this.skaters.concat(pack.skaters);
+		this.length = track.distanceFrom(this.start, this.end);
+		return this;
+	};
+	//check if the provided pack would extend this pack
+	//i.e. if any skater in the pack is within 10ft of this pack.
+	this.extendsPack = function(pack) {
+		if ((track.distanceFrom(this.start, pack.start) <= (this.length + tenFt)) ||
+            (track.distanceFrom(pack.start, this.start) <= (pack.length + tenFt))) {
+			return true;
+		} else {
+			return false;
+		}
+	};
+	this.toString = function() {
+		return ("start: " + this.start + "\nend: " + this.end + "\nskaters:\n" + this.skaters);
+	}
+}
+
+//line segments are used in many computations relating to the track.
+//the two main functions are for determining the intersection of this line
+//with either another line or an arc.
+function LineSeg(start, end) {
+	this.pt1 = start;
+	this.pt2 = end;
+	// Ax + By = C
+	this.a = this.pt2.y - this.pt1.y;
+	this.b = this.pt1.x - this.pt2.x;
+	this.c = (this.a * this.pt1.x) + (this.b * this.pt1.y);
+	this.mid = new createjs.Point(((this.pt2.x + this.pt1.x) / 2), ((this.pt2.y + this.pt1.y) / 2));
+	//determines where a line containing this segment would
+	//intersect the given arc
+	//this assumes that the line and arc are already known to intersect
+	this.intersectArc = function(center, radius, arcstart, arcend) {
+		if ((this.pt2.x - this.pt1.x) == 0) {
+			if (arcstart == arcstart1) {
+				return new createjs.Point(center.x, center.y - radius)
+			} else {
+				return new createjs.Point(center.x, center.y + radius)
+			}
+		} else {
+			al = Math.atan(this.a/(this.pt2.x - this.pt1.x));
+			if (arcstart > al || arcend < al) { al = Math.PI + al; };
+			//c = (center.x + (radius * Math.cos(al)) - this.pt1.x)/(this.pt2.x - this.pt1.x);
+			//x = this.pt1.x + c * (this.pt2.x - this.pt1.x);
+			//y = this.pt1.y + c * (this.a);
+			x = center.x + (radius * Math.cos(al));
+			y = center.y + (radius * Math.sin(al));
+			return new createjs.Point(x,y);
+		}
+	};
+	//determines where a line containing this segment would
+	//intersect the given line segment
+	//this assumes that the lines are known to intersect (i.e. are not parallel)
+	this.intersectLine = function(ln) {
+		det = (this.a*ln.b) - (ln.a * this.b);
+		x = ((ln.b * this.c) - (this.b * ln.c)) / det;
+		y = ((this.a * ln.c) - (ln.a * this.c)) / det;
+		return new createjs.Point(x, y);
+	};
+	//given an x-value returns the point on this line of that x-value
+	//assumes that it is already known that there is exactly one possible y value
+	this.computePoint = function(x) {
+		var y = (this.c - (this.a * x)) / this.b;
+		return new createjs.Point(x,y);
+	};
+	//creates a line segment along the same line which is centered at pt
+	//and whos total length is 2*dist.
+	//used for making 10 foot markings on the track
+	this.centeredLineSeg = function(pt, dist) {
+		var start;
+		var end;
+		if ((this.pt2.x - this.pt1.x) == 0) {
+			start = new createjs.Point(pt.x, pt.y - dist);
+			end = new createjs.Point(pt.x, pt.y + dist);
+		} else {
+			var a = (this.a * this.a) + (this.b * this.b);
+			var b = (2 * this.a * this.b * pt.y) - (2 * ( this.b * this.b) * pt.x) - (2 * this.a* this.c);
+			var c = ((this.b * this.b) * (pt.x * pt.x)) + ((this.b * this.b) * (pt.y * pt.y)) - (2 * this.b * this.c * pt.y) + (this.c * this.c) - ((this.b * this.b) * (dist * dist));
+			var x1 = (-b + Math.sqrt((b * b) - (4*a*c))) / (2 * a);
+			var x2 = (-b - Math.sqrt((b * b) - (4*a*c))) / (2 * a);
+			start = this.computePoint(x1);
+			end = this.computePoint(x2);
+		};
+		return new LineSeg(start, end);
+	}
+}
+
+//a useful helper function for determining if agiven x falls between y1 and y2
+//the function determines which of y1 and y2 is greater to check if x falls between.
+function between(x, y1, y2) {
+	if (y1 < y2) {
+		return (x >= y1 && x <= y2);
+	} else {
+		return (x <= y1 && x >= y2);
+	}
+}
+
+//  Straightaway
+//  a straightaway consists of an inside and an outside line 
+//  which are denoted by their start and end points.
+//  by convention the start point to end point should follow
+//  derby direction (counterclockwise).
+//  a dummy location for this section of track is identified using 
+//  the starting point of the inside line.
+//  A straightaway has functions to draw the inside and outside
+//  lines, check if a given point is within the boundries, and
+//  the distance between two points within the area bounded by 
+//  the track boundries of this straightaway.
+function Straightaway(in1,in2,out1,out2) {
+	this.dummyLoc = in1;
+	this.inStart = in1;
+	this.inEnd = in2;
+	this.outStart = out1;
+	this.outEnd = out2;
+	this.in = new LineSeg(in1, in2);
+	this.out = new LineSeg(out1, out2);
+	//creates a shape for the inside and outside boundaries for this straightaway.
+	//also computes where the 4 10-foot markers should go on this part of the track.
+	this.makeShape = function() {
+		var shape = new createjs.Shape();
+		shape.graphics.beginStroke("#000000").moveTo(this.inStart.x, this.inStart.y).lineTo(this.inEnd.x, this.inEnd.y).moveTo(this.outStart.x, this.outStart.y).lineTo(this.outEnd.x, this.outEnd.y).endStroke();
+		var marks = new createjs.Shape();
+		//4 marks on the straightaway
+		var outsideLine = new LineSeg(this.outStart, this.outEnd);
+		var intersectLn;
+		var i;
+		for (i=0; i<361; i = i + tenFt) {
+			if (this.inStart.x < this.inEnd.x) {
+				intersectLn = new LineSeg(new createjs.Point(this.inEnd.x - i, this.inEnd.y), outsideLine.computePoint(this.inEnd.x - i));
+			} else {
+				intersectLn = new LineSeg(new createjs.Point(this.inEnd.x + i, this.inEnd.y), outsideLine.computePoint(this.inEnd.x + i));
+			};
+			if (this.inStart.x < this.inEnd.x && (i == 0 || i == 360)) {
+				intersectLn = intersectLn;
+			} else {
+				intersectLn = intersectLn.centeredLineSeg(intersectLn.mid, oneFt);
+			};
+			marks.graphics.beginStroke("#000000").moveTo(intersectLn.pt1.x, intersectLn.pt1.y).lineTo(intersectLn.pt2.x, intersectLn.pt2.y).endStroke();
+		};
+		var path = new createjs.Container();
+		path.addChild(shape);
+		path.addChild(marks);
+		return path;
+	};
+	this.shape = this.makeShape();
+	//in bounds checks that the point is to the right of the inside line
+	//and to the left of the outside line, and that the x value is 
+	//between the x values for the inside line.
+	//it is important for this function that the convention of specifying
+	//the points for the lines follows derby direction.
+	this.inBounds = function(pt) {
+		if (between(pt.x, this.inStart.x, this.inEnd.x)) {
+			var inPt = this.in.computePoint(pt.x);
+			var outPt = this.out.computePoint(pt.x);
+			return (between(pt.y, inPt.y, outPt.y));
+		};
+	};
+	//distance computes the absolute "forward" distance between two positions
+	this.distance = function(pt1, pt2) {
+		return Math.abs(pt1.x - pt2.x);
+	};
+	// distanceFrom computes distance from pt1 to pt2 using forward distance 
+	// around the track. This assumes both points are within the area
+	// bounded by the inside and outside lines for this straightaway.
+	// a positive distance means that pt2 is ahead of pt1 following derby 
+	// direction (counterclockwise), while a negative distance menas that 
+	// p2 is "behind" pt1 and the distance value is anti-derby direction
+	// (clockwise).
+	this.distanceFrom = function(pt1, pt2) {
+		return (this.distance(this.dummyLoc, pt2) - this.distance(this.dummyLoc, pt1));
+	};
+	//to the given shape, add the geometric shape from start position to end position within
+	//this track section.
+	this.colorSection = function(shape, start, end, color) {
+		sLn = track.locToLine(start);
+		eLn = track.locToLine(end);
+		shape.graphics.beginStroke(color).beginFill(color).moveTo(sLn.pt1.x, sLn.pt1.y).lineTo(sLn.pt2.x, sLn.pt2.y).lineTo(eLn.pt2.x, eLn.pt2.y).lineTo(eLn.pt1.x, eLn.pt1.y).closePath();
+		return ;
+	}
+};
+
+//  Turn
+//  A turn consists of an inside and an outside arc which are denoted by their 
+//  center points,radius, and starting and ending angle. By convention the 
+//  start angle to end angle should follow derby direction (counterclockwise).
+//  A dummy location for this section of track is identified using the 
+//  starting point of the inside arc. A turn has functions to draw the 
+//  inside and outside lines, check if a given point is within the boundries, 
+//  and the distance between two points as measured in forward derby direction.
+function Turn(inc, inr, outc, outr, angles, anglee) {
+	this.dummyLoc = new createjs.Point(inc.x + (inr * Math.cos(angles)), inc.y + (inr * Math.sin(angles)));
+	this.incenter = inc;
+	this.inradius = inr;
+	this.outcenter = outc;
+	this.outradius = outr;
+	this.anglestart = angles;
+	this.angleend = anglee;
+	//creates a shape for the inside and outside boundaries for the turn,
+	//arc angle start and end are assumed to be given following
+	//derby direction and so arcs are drawn counterclockwise.
+	//also computes where the 5 10-foot markers should go on the track.
+	this.makeShape = function() {
+		var shape = new createjs.Shape();
+		shape.graphics.beginStroke("#000000").arc(this.incenter.x, this.incenter.y, this.inradius, this.anglestart, this.angleend).endStroke();
+		shape.graphics.beginStroke("#000000").arc(this.outcenter.x, this.outcenter.y, this.outradius, this.anglestart, this.angleend).endStroke();
+		var marks = new createjs.Shape();
+		var initPoint;
+		var intersectLn;
+		var intersectPt;
+		var x = 0;
+		var y = 0;
+		for (i=1; i<6; i++) {
+			x = this.incenter.x + (this.inradius * Math.cos(this.anglestart + (i * angle10ft)));
+			y = this.incenter.y + (this.inradius * Math.sin(this.anglestart + (i * angle10ft)));
+			initPoint = new createjs.Point(x,y);
+			intersectLn = new LineSeg(this.incenter, initPoint);
+			intersectPt = intersectLn.intersectArc(this.outcenter, this.outradius, this.anglestart, this.angleend);
+			intersectLn = new LineSeg(initPoint, intersectPt);
+			intersectLn = intersectLn.centeredLineSeg(intersectLn.mid, oneFt);
+			marks.graphics.beginStroke("#000000").moveTo(intersectLn.pt1.x, intersectLn.pt1.y).lineTo(intersectLn.pt2.x, intersectLn.pt2.y).endStroke();
+		};
+		var path = new createjs.Container();
+		path.addChild(shape);
+		path.addChild(marks);
+		return path;
+	}
+	this.shape = this.makeShape();
+	this.inBounds = function(pt) {
+		if ((this.anglestart > this.angleend && pt.x <= this.incenter.x) ||
+            (this.anglestart < this.angleend && pt.x >= this.incenter.x))  {
+			var inDist = Math.sqrt(((this.incenter.x - pt.x) * (this.incenter.x - pt.x)) + ((this.incenter.y - pt.y) * (this.incenter.y - pt.y)));
+			var outDist = Math.sqrt(((this.outcenter.x - pt.x) * (this.outcenter.x - pt.x)) + ((this.outcenter.y - pt.y) * (this.outcenter.y - pt.y)));
+			return (inDist >= this.inradius && outDist <= this.outradius);
+		};
+		return false;
+	};
+	this.distance = function(pt1, pt2) {
+		var ln1 = Math.sqrt(((pt1.x - this.incenter.x) * (pt1.x - this.incenter.x)) + ((pt1.y - this.incenter.y) * (pt1.y - this.incenter.y)));
+		var ln2 = Math.sqrt(((pt2.x - this.incenter.x) * (pt2.x - this.incenter.x)) + ((pt2.y - this.incenter.y) * (pt2.y - this.incenter.y)));
+		var dist = Math.sqrt(((pt1.x - pt2.x) * (pt1.x - pt2.x)) + ((pt1.y - pt2.y) * (pt1.y - pt2.y)));
+		var angle = Math.acos(((ln1 * ln1) + (ln2 * ln2) - (dist * dist)) / (2 * ln1 * ln2));
+		//return 12 * (angle * (10 / angle10ft));
+		return (angle * (1 / anglePx));
+	};
+	this.distanceFrom = function(pt1, pt2) {
+		return this.distance(this.dummyLoc, pt2) - this.distance(this.dummyLoc, pt1);
+	};
+	this.colorSection = function(shape, start, end, color) {
+		sAngle = this.anglestart + start;
+		eAngle = this.anglestart + end;
+		shape.graphics.beginStroke(color).beginFill(color).arc(this.incenter.x, this.incenter.y, this.inradius, sAngle, eAngle).arc(this.outcenter.x, this.outcenter.y, this.outradius, eAngle, sAngle, true).closePath();
+		return ;
+	}
+}
+
+//  track 
+//  the track contains 2 straightaways and 2 turns.
+//  it has methods to draw the track boundry and to
+//  identify if a given point is in bounds.
+function Track() {
+	this.straightaway1 = new Straightaway(in1start, in1end, out1start, out1end);
+	this.straightaway2 = new Straightaway(in2start, in2end, out2start, out2end);
+	this.turn1 = new Turn(in1c, inradius, out1c, outradius, arcstart1, arcend1);
+	this.turn2 = new Turn(in2c, inradius, out2c, outradius, arcstart2, arcend2);
+	this.trackMin = 0;
+	this.s1dist = this.straightaway1.distanceFrom(this.straightaway1.dummyLoc, this.turn1.dummyLoc);
+	this.s2dist = this.straightaway2.distanceFrom(this.straightaway2.dummyLoc, this.turn2.dummyLoc);
+	this.t1dist = this.turn1.distanceFrom(this.turn1.dummyLoc, this.straightaway2.dummyLoc);
+	this.t2dist = this.turn2.distanceFrom(this.turn2.dummyLoc, this.straightaway1.dummyLoc);
+	this.trackMax = this.s1dist + this.t1dist + this.s2dist + this.t2dist;
+	this.makeShape = function() {
+		var container = new createjs.Container();
+		container.addChild(this.straightaway1.shape);
+		container.addChild(this.straightaway2.shape);
+		container.addChild(this.turn1.shape);
+		container.addChild(this.turn2.shape);
+		container.setTransform(width/ 2,height/2,1,-1);
+		return container;
+	};
+	this.shape = this.makeShape();
+	//a point is in bounds of the track if it is in bounds of any one of the
+	// track sections.
+	this.inBounds = function(pt) {
+		return this.straightaway1.inBounds(pt) || 
+		       this.straightaway2.inBounds(pt) ||
+			   this.turn1.inBounds(pt) ||
+			   this.turn2.inBounds(pt);
+	};
+	//converts a coordinate point which is inbounds into a standardized track location.
+	//this value is the total forward distance from the begining of straightaway1
+	//to the given point.
+	//these values range from 0 (trackMin) to ___ (trackMax).
+	this.stdLoc = function(pt) {
+		var dist = 0;
+		if (this.straightaway1.inBounds(pt)) {
+			return (dist + this.straightaway1.distanceFrom(this.straightaway1.dummyLoc, pt));
+		}
+		dist = dist + this.s1dist;
+		if (this.turn1.inBounds(pt)) {
+			return (dist + this.turn1.distanceFrom(this.turn1.dummyLoc, pt));
+		}
+		dist = dist + this.t1dist;
+		if (this.straightaway2.inBounds(pt)) {
+			return (dist + this.straightaway2.distanceFrom(this.straightaway2.dummyLoc, pt));
+		}
+		dist = dist + this.s2dist;
+		return (dist + this.turn2.distanceFrom(this.turn2.dummyLoc, pt));
+	};
+	//given a standard location, returns line segment intersecting the inside and outside 
+	//line at that distance
+	this.locToLine = function(d) {
+		if (this.s1dist >= d || d == this.trackMax) {
+			x = d - 210;
+			return new LineSeg(this.straightaway1.in.computePoint(x), this.straightaway1.out.computePoint(x));
+		} else if (this.t1dist > (d - this.s1dist)){
+			ang = ((d - this.s1dist) * anglePx);
+			x = this.turn1.incenter.x + (this.turn1.inradius * Math.cos(this.turn1.anglestart + ang));
+			y = this.turn1.incenter.y + (this.turn1.inradius * Math.sin(this.turn1.anglestart + ang));
+			initPoint = new createjs.Point(x,y);
+			intersectLn = new LineSeg(this.turn1.incenter, initPoint);
+			intersectPt = intersectLn.intersectArc(this.turn1.outcenter, this.turn1.outradius, this.turn1.anglestart, this.turn1.angleend);
+			return new LineSeg(initPoint, intersectPt);
+		} else if (this.s2dist >= (d - this.s1dist - this.t1dist)) {
+			x = 210 - (d - this.s1dist - this.t1dist);
+			return new LineSeg(this.straightaway2.in.computePoint(x), this.straightaway2.out.computePoint(x));
+		} else if (this.t2dist > (d - this.s1dist - this.t1dist - this.s2dist)) {
+			ang = ((d - this.s1dist - this.t1dist - this.s2dist) * anglePx);
+			x = this.turn2.incenter.x + (this.turn2.inradius * Math.cos(this.turn2.anglestart + ang));
+			y = this.turn2.incenter.y + (this.turn2.inradius * Math.sin(this.turn2.anglestart + ang));
+			initPoint = new createjs.Point(x,y);
+			intersectLn = new LineSeg(this.turn2.incenter, initPoint);
+			intersectPt = intersectLn.intersectArc(this.turn2.outcenter, this.turn2.outradius, this.turn2.anglestart, this.turn2.angleend);
+			return new LineSeg(initPoint, intersectPt);
+		}
+	};
+	//determines the on-track forward distance from on standardized track location to another
+	//following derby direction.
+	this.distanceFrom = function(sk1, sk2) {
+		if (sk1 <= sk2) {
+			return (sk2 - sk1);
+		} else {
+			return (this.distanceFrom(sk1, this.trackMax) + this.distanceFrom(this.trackMin, sk2));
+		}
+	};
+	//determines the shortest track distance from one standardized track location to another.
+	//this function considers movement both in derby direction and non-derby direction;
+	//a positive result means the distance is in derby direction while a negative result
+	//means that the distance is anti-derby direction.
+	this.distance = function(sk1, sk2) {
+			dist1 = this.distanceFrom(sk1, sk2);
+			dist2 = dist1 - this.trackMax;
+			if (Math.abs(dist1) <= Math.abs(dist2)) {
+				return dist1;
+			} else {
+				return dist2;
+			}
+	};
+}
+
+function skaterShape(loc, color, position) {
+	skater = new createjs.Shape();
+	//if (position = "pivot") {
+	
+	//} else if (position = "jammer") {
+	
+	//} else {
+		skater.graphics.beginStroke("#000000").beginFill(color);
+		skater.graphics.arc(0, 0, 12, Math.PI, 0);
+		skater.graphics.closePath().endStroke();
+	//}
+	skater.x = loc.x;
+	skater.y = loc.y;
+	return skater;
+}
+
+// Constructor function for Skater objects
+function Skater(id, loc, teamColor, position) {
+	this.name = id;
+	this.home = loc;
+	this.team = teamColor;
+	this.position = position;
+	this.shape = skaterShape(loc, teamColor, position);
+	this.resetLoc = function() {
+		this.shape.x = this.home.x;
+		this.shape.y = this.home.y;
+		return ;
+	};
+	this.trackLoc = function() {
+		return track.shape.globalToLocal(this.shape.x, this.shape.y);
+	}
+	this.inBounds = function() {
+		var trackPt = track.shape.globalToLocal(this.shape.x, this.shape.y);
+		return track.inBounds(trackPt);
+	};
+	this.toString = function() {
+		return this.name;
+	}
+}
+
+//make the passed item draggable on the screen.	
+function draggable(item) {
+	item.on("pressmove", function(evt) {
+		evt.target.x = evt.stageX;
+		evt.target.y = evt.stageY;
+		//stage.update();
+		drawPack();
+	});
+	item.on("pressup", function(evt) { console.log("up"); });
+	return ;
+}
+
+//function to determine which skaters are in bounds, and prints to console.
+function getInBounds() {
+	var inBounds;
+	var skater;
+	for (skater of blockerLst) {
+		inBounds = skater.inBounds(track);
+		var output = "dummy";
+		if (inBounds) {
+			output = " is in bounds.";
+		} else {
+			output = " is not in bounds.";
+		};
+		console.log(skater.name + output);
+	}
+	return ;
+}
+
+//determines if a list of skaters contains at least one skater from each team.
+function hasBothTeams(lst) {
+	var team1 = lst[0].team;
+	var hasTwo = false;
+	for (skater of lst) {
+		if (team1 != skater.team) {
+			hasTwo = true;
+		}
+	}
+	return hasTwo;
+}
+
+
+
+//function to determine where the pack is and draw it on the track.
+function drawPack() {
+	//clear the old pack drawing before starting
+	thePack.graphics.clear();
+	//first we identify all the in boudns skaters, and construct a potential pack
+	//of just that skater for each.
+	var inBoundsSkaters = [];
+	for (skater of blockerLst) {
+		if (skater.inBounds()) {
+			inBoundsSkaters.push(skater);
+		}
+	}
+	var packLst = [];
+	for (skater of inBoundsSkaters) {
+		packLst.push(new Pack(skater));
+	}
+	//this loop will try to merge potential packs that are within 10 feet from each other
+	//at the end the list will contain the smallest set of potential packs
+	//that can be constructed.
+	var lstLength;
+	do {
+		lstLength = packLst.length;
+		for (i=0; i<packLst.length; i++) {
+			notMerged = true;
+			pack1 = packLst.shift();
+			for (j=0; j<packLst.length; j++) {
+				if (notMerged) {
+					pack2 = packLst.shift();
+					if (pack1.extendsPack(pack2)) {
+						pack2 = pack2.mergePack(pack1);
+						packLst.push(pack2);
+						notMerged= false;
+					} else {
+						packLst.push(pack2);
+					}
+				}
+			};
+			if (notMerged) {
+				packLst.push(pack1);
+			}
+		}
+	}
+	while (lstLength > packLst.length);
+	console.log(packLst);
+	//now that the potential packs are identified, we must see if any one will constitute a pack
+	packLst.sort(function(p1,p2) {return p2.skaters.length - p1.skaters.length});
+	packLst = packLst.filter(function(p) { return hasBothTeams(p.skaters)});
+	if (packLst.length == 0) {
+		//no possible packs
+		console.log("There is no pack.");
+	} else if (packLst.length > 1 && packLst[0].skaters.length == packLst[1].skaters.length) {
+		//no pack, split pack
+		console.log("There is no pack")
+	} else {
+		var pk = packLst[0];
+		console.log("The pack is:\n" + pk);
+		//draw the pack on the track using start & end for calculating the pack and engagement zone
+		//var packStart = track.locToLine(pk.start);
+		//var packEnd = track.locToLine(pk.end);
+		var ezStart = pk.start - (20 * oneFt);
+		if (ezStart < 0) {
+			ezStart = ezStart + track.trackMax;
+		} 
+		//ezStart = track.locToLine(ezStart);
+		var ezEnd = pk.end + (20 * oneFt);
+		if (ezEnd > track.trackMax) {
+			ezEnd = ezEnd - track.trackMax;
+		}
+		//ezEnd = track.locToLine(ezEnd);
+		//colorize section
+		//colors the track a given color, from a starting standardized location to an ending standardized location
+		colorize = function(start, end, color) {
+			if (start < track.s1dist || start == track.trackMax) {
+				if (end <= track.s1dist) {
+					track.straightaway1.colorSection(thePack, start, end, color);
+				} else {
+					track.straightaway1.colorSection(thePack, start, track.s1dist, color);
+					colorize(track.s1dist, end, color);
+				}
+			} else if (start < track.s1dist + track.t1dist) {
+				if (end >= track.s1dist && end <= track.s1dist + track.t1dist) {
+					sAngle = ((start - track.s1dist) * anglePx);
+					eAngle = ((end - track.s1dist) * anglePx);
+					track.turn1.colorSection(thePack, sAngle, eAngle, color);
+				} else {	
+					sAngle = ((start - track.s1dist) * anglePx);
+					eAngle = (track.t1dist * anglePx);
+					track.turn1.colorSection(thePack, sAngle, eAngle, color);
+					colorize(track.s1dist + track.t1dist, end, color);
+				}
+			} else if (start < track.s1dist + track.t1dist + track.s2dist) {
+				if (end >= track.s1dist + track.t1dist && end <= track.s1dist + track.t1dist + track.s2dist) {
+					track.straightaway2.colorSection(thePack, start, end, color);
+				} else {
+					track.straightaway2.colorSection(thePack, start, track.s1dist + track.t1dist + track.s2dist, color);
+					colorize(track.s1dist + track.t1dist + track.s2dist, end, color);
+				}
+			} else if (start < track.trackMax) {
+				if (end >= track.s1dist + track.t1dist + track.s2dist && end <= track.trackMax) {
+					sAngle = ((start - track.s1dist - track.t1dist - track.s2dist) * anglePx);
+					eAngle = ((end - track.s1dist - track.t1dist - track.s2dist) * anglePx);
+					track.turn2.colorSection(thePack, sAngle, eAngle, color);
+				} else {
+					sAngle = ((start - track.s1dist - track.t1dist - track.s2dist) * anglePx);
+					eAngle = (track.t2dist * anglePx);
+					track.turn2.colorSection(thePack, sAngle, eAngle, color);
+					colorize(track.trackMin, end, color);
+				}
+			}
+		};
+		colorize(ezStart, ezEnd, ezColor);
+		colorize(pk.start, pk.end, packColor);
+		//thePack.graphics.beginStroke(ezColor).beginFill(ezColor).moveTo(ezStart.pt1.x, ezStart.pt1.y).lineTo(ezStart.pt2.x, ezStart.pt2.y).lineTo(ezEnd.pt2.x, ezEnd.pt2.y).lineTo(ezEnd.pt1.x, ezEnd.pt1.y).closePath();
+		//thePack.graphics.beginStroke(packColor).beginFill(packColor).moveTo(packStart.pt1.x, packStart.pt1.y).lineTo(packStart.pt2.x, packStart.pt2.y).lineTo(packEnd.pt2.x, packEnd.pt2.y).lineTo(packEnd.pt1.x, packEnd.pt1.y).closePath();
+	}
+	stage.update();
+	return ;
+}
+	
+function init() {
+	stage.addChild(track.shape);
+
+	// to check that the dummy points for each section of track are correct,
+	// this will draw a red rectangle at each point.
+	<!-- track.straightaway1.shape.graphics.beginFill("red").rect(track.straightaway1.dummyLoc.x, track.straightaway1.dummyLoc.y, 10, 10); -->
+	<!-- track.straightaway2.shape.graphics.beginFill("red").rect(track.straightaway2.dummyLoc.x, track.straightaway2.dummyLoc.y, 10, 10); -->
+	<!-- track.turn1.shape.graphics.beginFill("red").rect(track.turn1.dummyLoc.x, track.turn1.dummyLoc.y, 10, 10); -->
+	<!-- track.turn2.shape.graphics.beginFill("red").rect(track.turn2.dummyLoc.x, track.turn2.dummyLoc.y, 10, 10); -->
+
+	for (skater of blockerLst) {
+		stage.addChild(skater.shape);
+		draggable(skater.shape);
+	};
+	
+	drawPack();
+  }
+</script>
+
+
+</body>
+</html>
