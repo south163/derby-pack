@@ -493,6 +493,13 @@ function draggable(item) {
 		drawPack();
 	});
 	item.on("pressup", function(evt) { console.log("up"); });
+	item.on("touchmove", function(evt) {
+		evt.target.x = evt.stageX;
+		evt.target.y = evt.stageY;
+		//stage.update();
+		drawPack();
+	});
+	item.on("touchend", function(evt) { console.log("up"); });
 	return ;
 }
 
