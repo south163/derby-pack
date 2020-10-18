@@ -3,9 +3,9 @@
 <body onload="init();">
 <script src="https://code.createjs.com/1.0.0/createjs.min.js"></script>
 <h2>Pack Definition</h2>
-
 <br></br>
-
+<button type=button id="ShowOrHidePack" onclick="togglePack()" value="Hide Pack">Hide Pack</button>
+<br></br>
 <canvas id="myCanvas" width="1296" height="900"
 style="border:1px solid #d3d3d3;">
 Your browser does not support the canvas element.
@@ -46,6 +46,25 @@ const tenFt = oneFt * 10;
 //constants for identifying the pack
 const ezColor = "#C7FFC3";
 const packColor = "green";
+
+//configuration variables
+var showPack=true;
+
+function togglePack() {
+	var button = document.getElementById("ShowOrHidePack");
+	if (showPack) {
+		showPack = false;
+		button.value = "Show Pack";
+		button.textContent = "Show Pack";
+	} else {
+		showPack = true;
+		button.value = "Hide Pack";
+		button.textContent = "Hide Pack";
+	};
+	drawPack();
+	stage.update();
+	return ;
+}
 
 <!-- initial setup of the canvas -->
 const canvas = document.getElementById("myCanvas");
@@ -490,8 +509,8 @@ function draggable(item) {
 	item.on("pressmove", function(evt) {
 		evt.target.x = evt.stageX;
 		evt.target.y = evt.stageY;
-		//stage.update();
 		drawPack();
+		stage.update();
 	});
 	item.on("pressup", function(evt) { console.log("up"); });
 	return ;
@@ -532,6 +551,9 @@ function hasBothTeams(lst) {
 function drawPack() {
 	//clear the old pack drawing before starting
 	thePack.graphics.clear();
+	if (!showPack){
+		return ;
+	}
 	//first we identify all the in boudns skaters, and construct a potential pack
 	//of just that skater for each.
 	var inBoundsSkaters = [];
